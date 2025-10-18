@@ -2,12 +2,14 @@ from flask import Flask, render_template, request, jsonify, session, Response
 import google.generativeai as genai
 import os
 import traceback
+import re
+import time
+from rules import RULES
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key'  # Để lưu session
 
 # API key từ Google AI Studio
-# Thay bằng key hợp lệ
 API_KEY = os.getenv(
     "GOOGLE_API_KEY", "AIzaSyChvKPKEYs5aua4sfByBHq3sPopBbg38IQ")
 genai.configure(api_key=API_KEY)
@@ -43,17 +45,34 @@ def chat():
         print("Error: No prompt provided")  # Log lỗi
         return jsonify({'error': 'No prompt provided'}), 400
 
-    # Thêm user message vào session
+    # Kiểm tra rule-based trước
+    for rule in RULES:
+        if re.search(rule['pattern'], prompt):
+            session['messages'].append({"role": "user", "content": prompt})
+            session['messages'].append(
+                {"role": "assistant", "content": rule['response']})
+            session.modified = True
+
+            # Giả lập hiệu ứng đánh máy cho rule-based
+            def generate_response():
+                response = rule['response']
+                for i in range(0, len(response), 5):  # Gửi 5 ký tự mỗi lần
+                    yield response[i:i+5].encode('utf-8')
+                    time.sleep(0.02)  # Độ trễ 20ms để tạo hiệu ứng đánh máy
+                if len(response) % 5 != 0:
+                    yield response[-(len(response) % 5):].encode('utf-8')
+
+            return Response(generate_response(), mimetype='text/plain')
+
+    # Nếu không khớp rule-based, gửi đến Gemini API
     session['messages'].append({"role": "user", "content": prompt})
     session.modified = True
-
-    # Copy messages để sử dụng
     messages_copy = session['messages'][:]
 
     try:
         # Chuẩn bị client và gọi Gemini API với stream=True
         client = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",  # Sử dụng model mới nhất
+            model_name="gemini-2.5-flash",  # Sử dụng model mới nhất
             generation_config={
                 "temperature": 0.7,
                 "top_p": 0.9,
